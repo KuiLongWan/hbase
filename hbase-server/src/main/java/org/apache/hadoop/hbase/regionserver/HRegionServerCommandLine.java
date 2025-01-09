@@ -60,7 +60,10 @@ public class HRegionServerCommandLine extends ServerCommandLine {
           + " is false");
       } else {
         logProcessInfo(getConf());
+        // KLRD: 通过反射的方式获取HRegionServer的构造方法，并创建HRegionServer对象实例
+        //  下面语句会执行HRegionServer的构造方法
         HRegionServer hrs = HRegionServer.constructRegionServer(regionServerClass, conf);
+        // KLRD: HRegionServer是Thread，调用start启动
         hrs.start();
         hrs.join();
         if (hrs.isAborted()) {
@@ -85,10 +88,11 @@ public class HRegionServerCommandLine extends ServerCommandLine {
       return 1;
     }
 
+    // 使用脚本hbase-daemon.sh start regionserver启动RegionServer，那么args[0]=start
     String cmd = args[0];
 
     if ("start".equals(cmd)) {
-      return start();
+      return start(); // 启动RegionServer
     } else if ("stop".equals(cmd)) {
       System.err.println("To shutdown the regionserver run "
         + "hbase-daemon.sh stop regionserver or send a kill signal to " + "the regionserver pid");

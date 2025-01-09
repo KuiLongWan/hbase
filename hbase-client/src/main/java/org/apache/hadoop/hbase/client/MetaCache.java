@@ -47,7 +47,9 @@ public class MetaCache {
   /**
    * Map of table to table {@link HRegionLocation}s. <br>
    * Despite being Concurrent, writes to the map should be synchronized because we have cases where
-   * we need to make multiple updates atomically.
+   * we need to make multiple updates atomically. <br>
+   *
+   * KLRD: Map结构：{TableName, {startRow, RegionLocations}}
    */
   private final ConcurrentMap<TableName,
     ConcurrentNavigableMap<byte[], RegionLocations>> cachedRegionLocations =

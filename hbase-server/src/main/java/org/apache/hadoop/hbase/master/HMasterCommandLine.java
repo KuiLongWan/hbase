@@ -90,6 +90,8 @@ public class HMasterCommandLine extends ServerCommandLine {
 
     CommandLine cmd;
     try {
+      // KLRD: hbase-daemons.sh start master 启动HMaster
+      //  args参数：[start master]
       cmd = new GnuParser().parse(opt, args);
     } catch (ParseException e) {
       LOG.error("Could not parse: ", e);
@@ -141,9 +143,11 @@ public class HMasterCommandLine extends ServerCommandLine {
       return 1;
     }
 
+    // KLRD: args参数：[start master]，那么command=start
     String command = remainingArgs.get(0);
 
     if ("start".equals(command)) {
+      // KLRD: 启动HMaster
       return startMaster();
     } else if ("stop".equals(command)) {
       if (shutDownCluster) {
@@ -168,6 +172,8 @@ public class HMasterCommandLine extends ServerCommandLine {
     try (Scope ignored = span.makeCurrent()) {
       // If 'local', defer to LocalHBaseCluster instance. Starts master
       // and regionserver both in the one JVM.
+      // KLRD: HBase有两种模式：本地模式、分布式模式
+      //  if：启动本地模式； else：启动分布式集群
       if (LocalHBaseCluster.isLocal(conf)) {
         DefaultMetricsSystem.setMiniClusterMode(true);
         final MiniZooKeeperCluster zooKeeperCluster = new MiniZooKeeperCluster(conf);
@@ -244,12 +250,18 @@ public class HMasterCommandLine extends ServerCommandLine {
         cluster.startup();
         waitOnMasterThreads(cluster);
       } else {
+        // KLRD: 启动分布式集群
         logProcessInfo(getConf());
+
+        // KLRD: 通过反射的方式创建HMaster实例
+        //  1.通过反射获取带Configuration参数的HMaster构造方法
+        //  2.通过构造方法创建HMaster实例
         HMaster master = HMaster.constructMaster(masterClass, conf);
         if (master.isStopped()) {
           LOG.info("Won't bring the Master up as a shutdown is requested");
           return 1;
         }
+        // KLRD: 启动HMaster服务（HMaster继承了Tread类）
         master.start();
         master.join();
         if (master.isAborted()) throw new RuntimeException("HMaster Aborted");

@@ -351,6 +351,13 @@ public class RSRpcServices
   private final long maxScannerResultSize;
 
   // The reference to the priority extraction function
+  /**
+   * KLRD: 主要用于控制请求的优先级调度。它决定了如何根据请求的优先级来安排请求的执行顺序，
+   *  以确保高优先级的请求能够尽早被处理，提升系统的响应能力和资源使用效率。
+   *  - priority <- AnnotationReadingPriorityFunction，
+   *  它根据方法/类上的注解确定优先级，如： closeRegion方法的注解：
+   *   @QosPriority(priority = HConstants.ADMIN_QOS)
+   */
   private final PriorityFunction priority;
 
   private ScannerIdGenerator scannerIdGenerator;
@@ -1211,12 +1218,14 @@ public class RSRpcServices
   public RSRpcServices(final HRegionServer rs) throws IOException {
     final Configuration conf = rs.getConfiguration();
     regionServer = rs;
+    // KLRD: 一次批操作的row数大于阈值时记录日志，默认5000
     rowSizeWarnThreshold =
       conf.getInt(HConstants.BATCH_ROWS_THRESHOLD_NAME, HConstants.BATCH_ROWS_THRESHOLD_DEFAULT);
+    // KLRD: 批操作的row数大于上面设置的阈值是否拒绝执行这些row操作，默认false
     rejectRowsWithSizeOverThreshold =
       conf.getBoolean(REJECT_BATCH_ROWS_OVER_THRESHOLD, DEFAULT_REJECT_BATCH_ROWS_OVER_THRESHOLD);
 
-    final RpcSchedulerFactory rpcSchedulerFactory;
+    final RpcSchedulerFactory rpcSchedulerFactory; // KLRD: SimpleRpcSchedulerFactory.class
     try {
       rpcSchedulerFactory = getRpcSchedulerFactoryClass().asSubclass(RpcSchedulerFactory.class)
         .getDeclaredConstructor().newInstance();
@@ -1227,14 +1236,17 @@ public class RSRpcServices
     // Server to handle client requests.
     final InetSocketAddress initialIsa;
     final InetSocketAddress bindAddress;
-    if (this instanceof MasterRpcServices) {
+    // 获取RPC服务端的ip和port
+    if (this instanceof MasterRpcServices) { // KLRD: HMaster (extends MasterRpcServices)
       String hostname = DNS.getHostname(conf, DNS.ServerType.MASTER);
+      // KLRD: HMaster Rpc端口号：16000
       int port = conf.getInt(HConstants.MASTER_PORT, HConstants.DEFAULT_MASTER_PORT);
       // Creation of a HSA will force a resolve.
       initialIsa = new InetSocketAddress(hostname, port);
       bindAddress = new InetSocketAddress(conf.get("hbase.master.ipc.address", hostname), port);
-    } else {
+    } else { // KLRD: RegionServer
       String hostname = DNS.getHostname(conf, DNS.ServerType.REGIONSERVER);
+      // KLRD: HRegionServer Rpc端口号：16020
       int port = conf.getInt(HConstants.REGIONSERVER_PORT, HConstants.DEFAULT_REGIONSERVER_PORT);
       // Creation of a HSA will force a resolve.
       initialIsa = new InetSocketAddress(hostname, port);
@@ -1251,6 +1263,7 @@ public class RSRpcServices
       + Address.fromParts(initialIsa.getHostName(), initialIsa.getPort()).toStringWithoutDomain();
     // Set how many times to retry talking to another server over Connection.
     ConnectionUtils.setServerSideHConnectionRetriesConfig(conf, name, LOG);
+    // KLRD: 创建RPC服务端实例
     rpcServer = createRpcServer(rs, rpcSchedulerFactory, bindAddress, name);
     rpcServer.setRsRpcServices(this);
     if (!(rs instanceof HMaster)) {

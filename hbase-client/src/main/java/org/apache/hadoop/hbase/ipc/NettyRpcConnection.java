@@ -320,6 +320,7 @@ class NettyRpcConnection extends RpcConnection {
     if (reloginInProgress) {
       throw new IOException(RpcConnectionConstants.RELOGIN_IS_IN_PROGRESS);
     }
+    // TODO @KLW hrc -> HBaseRpcControllerImpl
     hrc.notifyOnCancel(new RpcCallback<Object>() {
 
       @Override

@@ -375,6 +375,7 @@ public class HTable implements Table {
 
     if (get.getConsistency() == Consistency.STRONG) {
       final Get configuredGet = get;
+      // TODO @KLW: callable -> ClientServiceCallable(extends RegionServerCallable)
       ClientServiceCallable<Result> callable = new ClientServiceCallable<Result>(this.connection,
         getName(), get.getRow(), this.rpcControllerFactory.newController(), get.getPriority()) {
         @Override
@@ -387,6 +388,7 @@ public class HTable implements Table {
             : ProtobufUtil.toResult(response.getResult(), getRpcControllerCellScanner());
         }
       };
+      // TODO @KLW: newCaller -> RpcRetryingCallerImpl
       return rpcCallerFactory.<Result> newCaller(readRpcTimeoutMs).callWithRetries(callable,
         this.operationTimeoutMs);
     }

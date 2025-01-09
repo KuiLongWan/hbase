@@ -109,6 +109,7 @@ public abstract class RegionServerCallable<T, S> implements RetryingCallable<T> 
       // Iff non-null and an instance of a SHADED rpcController, do config! Unshaded -- i.e.
       // com.google.protobuf.RpcController or null -- will just skip over this config.
       if (getRpcController() != null) {
+        // TODO @KLW HBaseRpcControllerImpl
         RpcController shadedRpcController = (RpcController) getRpcController();
         // Do a reset to clear previous states, such as CellScanner.
         shadedRpcController.reset();
@@ -215,14 +216,16 @@ public abstract class RegionServerCallable<T, S> implements RetryingCallable<T> 
     ) {
       throw new TableNotEnabledException(tableName.getNameAsString() + " is disabled.");
     }
+    // KLRD: 1.根据表名和rowkey获取Region位置
     try (RegionLocator regionLocator = connection.getRegionLocator(tableName)) {
-      this.location = regionLocator.getRegionLocation(row);
+      this.location = regionLocator.getRegionLocation(row); // this.location -> HRegionLocation
     }
     if (this.location == null) {
       throw new IOException("Failed to find location, tableName=" + tableName + ", row="
         + Bytes.toString(row) + ", reload=" + reload);
     }
-    setStubByServiceName(this.location.getServerName());
+    // TODO @KLW: 2.设置RPC Stub
+    setStubByServiceName(this.location.getServerName()); // serverName -> ServerName = kylin,35699,timestamp
   }
 
   /**

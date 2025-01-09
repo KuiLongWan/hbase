@@ -24,6 +24,11 @@ import org.apache.yetus.audience.InterfaceStability;
 /**
  * This class encapsulates a byte array and overrides hashCode and equals so that it's identity is
  * based on the data rather than the array instance.
+ *
+ * HashedBytes通常是一个封装字节数组（byte array）的类，在 HBase 中，行键（row key）以字节数组的形式存在。
+ * 为了高效地管理和比较这些字节数组，HBase 可能使用类似 HashedBytes 的类来封装并提供快速的哈希码计算和比较功能。
+ * 使用这种封装类的好处是，能够更高效地管理哈希操作，
+ * 比如避免直接对字节数组进行逐个字节比较，而是通过预先计算的哈希值进行快速比较。
  */
 @InterfaceAudience.Private
 @InterfaceStability.Stable

@@ -78,13 +78,17 @@ public class MemorySizeUtil {
   /**
    * Checks whether we have enough heap memory left out after portion for Memstore and Block cache.
    * We need atleast 20% of heap left out for other RS functions.
+   * KLRD: RS的heap内存分配情况： MemStore(40%) + BlockCache(40%) + RS其他服务(20%)
+   *  这个检查的目的：保证RS用于其他服务的内存≥20%
    */
   public static void checkForClusterFreeHeapMemoryLimit(Configuration conf) {
     if (conf.get(MEMSTORE_SIZE_OLD_KEY) != null) {
       LOG.warn(MEMSTORE_SIZE_OLD_KEY + " is deprecated by " + MEMSTORE_SIZE_KEY);
     }
+    // KLRD: MemStore默认占heap的40%
     float globalMemstoreSize = getGlobalMemStoreHeapPercent(conf, false);
     int gml = (int) (globalMemstoreSize * CONVERT_TO_PERCENTAGE);
+    // KLRD: BlockCache默认占heap的40%
     float blockCacheUpperLimit = getBlockCacheHeapPercent(conf);
     int bcul = (int) (blockCacheUpperLimit * CONVERT_TO_PERCENTAGE);
     if (
@@ -103,6 +107,7 @@ public class MemorySizeUtil {
 
   /**
    * Retrieve global memstore configured size as percentage of total heap.
+   * KLRD: MemStore默认占heap的40%
    */
   public static float getGlobalMemStoreHeapPercent(final Configuration c,
     final boolean logInvalid) {
@@ -193,6 +198,7 @@ public class MemorySizeUtil {
 
   /**
    * Retrieve configured size for on heap block cache as percentage of total heap.
+   * KLRD: BlockCache默认占heap的40%
    */
   public static float getBlockCacheHeapPercent(final Configuration conf) {
     // L1 block cache is always on heap

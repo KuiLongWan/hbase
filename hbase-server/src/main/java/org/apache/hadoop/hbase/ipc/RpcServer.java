@@ -635,9 +635,7 @@ public abstract class RpcServer implements RpcServerInterface, ConfigurationObse
    */
   protected int channelRead(ReadableByteChannel channel, ByteBuffer buffer) throws IOException {
 
-    int count = (buffer.remaining() <= NIO_BUFFER_LIMIT)
-      ? channel.read(buffer)
-      : channelIO(channel, null, buffer);
+    int count = (buffer.remaining() <= NIO_BUFFER_LIMIT) ? channel.read(buffer) : channelIO(channel, null, buffer);
     if (count > 0) {
       metrics.receivedBytes(count);
     }

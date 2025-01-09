@@ -187,6 +187,7 @@ public final class ZKUtil {
   public static List<String> listChildrenAndWatchForNewChildren(ZKWatcher zkw, String znode)
     throws KeeperException {
     try {
+      // KLRD: 获取指定znode下的所有子znode
       return zkw.getRecoverableZooKeeper().getChildren(znode, zkw);
     } catch (KeeperException.NoNodeException ke) {
       LOG.debug(zkw.prefix("Unable to list children of znode " + znode + " "

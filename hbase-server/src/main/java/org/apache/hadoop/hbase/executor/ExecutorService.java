@@ -77,6 +77,10 @@ public class ExecutorService {
     this.servername = servername;
   }
 
+  boolean isExecutorServiceRunning(String name) {
+    return this.executorMap.containsKey(name);
+  }
+
   /**
    * Start an executor service with a given name. If there was a service already started with the
    * same name, this throws a RuntimeException.
@@ -94,10 +98,6 @@ public class ExecutorService {
 
     LOG.debug("Starting executor service name={}, corePoolSize={}, maxPoolSize={}", name,
       hbes.threadPoolExecutor.getCorePoolSize(), hbes.threadPoolExecutor.getMaximumPoolSize());
-  }
-
-  boolean isExecutorServiceRunning(String name) {
-    return this.executorMap.containsKey(name);
   }
 
   public void shutdown() {

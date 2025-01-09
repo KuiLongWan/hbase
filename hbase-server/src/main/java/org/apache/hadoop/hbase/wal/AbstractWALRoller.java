@@ -124,6 +124,7 @@ public abstract class AbstractWALRoller<T extends Abortable> extends Thread impl
   protected AbstractWALRoller(String name, Configuration conf, T abortable) {
     super(name);
     this.abortable = abortable;
+    // KLRD: 每小时滚动一次
     this.rollPeriod = conf.getLong(WAL_ROLL_PERIOD_KEY, 3600000);
     this.threadWakeFrequency = conf.getInt(HConstants.THREAD_WAKE_FREQUENCY, 10 * 1000);
     this.checkLowReplicationInterval =

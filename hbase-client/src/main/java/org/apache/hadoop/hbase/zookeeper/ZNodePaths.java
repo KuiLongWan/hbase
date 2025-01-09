@@ -91,16 +91,26 @@ public class ZNodePaths {
   final String snapshotCleanupZNode;
 
   public ZNodePaths(Configuration conf) {
+    /**
+     * KLRD: 配置了HBase在Zookeeper上的各种znode路径
+     */
+
+    // KLRD: HBase集群在ZK上的根znode，默认：/hbase
     baseZNode = conf.get(ZOOKEEPER_ZNODE_PARENT, DEFAULT_ZOOKEEPER_ZNODE_PARENT);
     metaZNodePrefix = conf.get(META_ZNODE_PREFIX_CONF_KEY, META_ZNODE_PREFIX);
     rsZNode = joinZNode(baseZNode, conf.get("zookeeper.znode.rs", "rs"));
     drainingZNode = joinZNode(baseZNode, conf.get("zookeeper.znode.draining.rs", "draining"));
+    // KLRD: 状态为active的HMaster位置信息，/hbase/master
     masterAddressZNode = joinZNode(baseZNode, conf.get("zookeeper.znode.master", "master"));
+    // KLRD: 状态为backup的HMaster位置信息，/hbase/backup-master
     backupMasterAddressesZNode =
       joinZNode(baseZNode, conf.get("zookeeper.znode.backup.masters", "backup-masters"));
+    // KLRD: 集群运行状态，/hbase/running
     clusterStateZNode = joinZNode(baseZNode, conf.get("zookeeper.znode.state", "running"));
     tableZNode = joinZNode(baseZNode, conf.get("zookeeper.znode.tableEnableDisable", "table"));
+    // KLRD: 集群id，/hbase/hbaseid
     clusterIdZNode = joinZNode(baseZNode, conf.get("zookeeper.znode.clusterId", "hbaseid"));
+    // KLRD: /hbase/splitWAL
     splitLogZNode = joinZNode(baseZNode, conf.get("zookeeper.znode.splitlog", SPLIT_LOGDIR_NAME));
     balancerZNode = joinZNode(baseZNode, conf.get("zookeeper.znode.balancer", "balancer"));
     regionNormalizerZNode =

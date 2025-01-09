@@ -76,6 +76,14 @@ public class AnnotationReadingPriorityFunction implements PriorityFunction {
   // We need to mock the regionserver instance for some unit tests (set via
   // setRegionServer method.
   private RSRpcServices rpcServices;
+
+  /**
+   * KLRD: 在 HBase 中，RPC 请求通常是一个 Protobuf 消息，这个消息可能包含多个参数。
+   *  如果每个 RPC 请求都需要在服务器端反序列化这些参数消息，这会增加系统的开销。
+   *  为了解决这个问题，knownArgumentClasses 会帮助服务器决定是否需要反序列化某个请求的消息。
+   *  只有在参数类是已知的（即在 knownArgumentClasses 中）时，服务器才会进行反序列化，
+   *  从而避免了对所有 RPC 参数的预先反序列化，以提高性能。
+   */
   @SuppressWarnings("unchecked")
   private final Class<? extends Message>[] knownArgumentClasses =
     new Class[] { GetRegionInfoRequest.class, GetStoreFileRequest.class, CloseRegionRequest.class,

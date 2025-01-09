@@ -28,6 +28,16 @@ import org.apache.yetus.audience.InterfaceAudience;
  */
 @InterfaceAudience.Private
 public abstract class ZKListener {
+  /**
+   * KLRD: ZK基础知识
+   *  ZK中有四种事件：
+   *   1.nodeCreated           znode被创建
+   *   2.nodeDeleted           znode被删除
+   *   3.nodeDataChanged       znode数据被改变
+   *   4.nodeChildrenChanged   znode下的子znode发生改变
+   *  如果客户端在ZKWatcher中注册了特定znode，当该znode发生以上四种情况时，
+   *  客户端会触发相应方法来应对这四种情况
+   */
 
   // Reference to the zk watcher which also contains configuration and constants
   protected ZKWatcher watcher;

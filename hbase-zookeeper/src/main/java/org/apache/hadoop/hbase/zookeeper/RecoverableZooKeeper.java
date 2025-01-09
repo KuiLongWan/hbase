@@ -71,6 +71,7 @@ import org.slf4j.LoggerFactory;
 public class RecoverableZooKeeper {
   private static final Logger LOG = LoggerFactory.getLogger(RecoverableZooKeeper.class);
   // the actual ZooKeeper client instance
+  // KLRD: 这是真正的ZK客户端对象
   private ZooKeeper zk;
   private final RetryCounterFactory retryCounterFactory;
   // An identifier of this process in the cluster
@@ -114,14 +115,18 @@ public class RecoverableZooKeeper {
     if (ensemble == null) {
       throw new IOException("Unable to determine ZooKeeper ensemble");
     }
+    // KLRD: 超时时间
     int timeout = conf.getInt(HConstants.ZK_SESSION_TIMEOUT, HConstants.DEFAULT_ZK_SESSION_TIMEOUT);
     if (LOG.isTraceEnabled()) {
       LOG.trace("{} opening connection to ZooKeeper ensemble={}", identifier, ensemble);
     }
+    // KLRD: 重试次数
     int retry = conf.getInt("zookeeper.recovery.retry", 3);
+    // KLRD: 重试间隔
     int retryIntervalMillis = conf.getInt("zookeeper.recovery.retry.intervalmill", 1000);
     int maxSleepTime = conf.getInt("zookeeper.recovery.retry.maxsleeptime", 60000);
     int multiMaxSize = conf.getInt("zookeeper.multi.max.size", 1024 * 1024);
+    // KLRD: ZK客户端实例
     return new RecoverableZooKeeper(ensemble, timeout, watcher, retry, retryIntervalMillis,
       maxSleepTime, identifier, multiMaxSize);
   }
@@ -150,6 +155,7 @@ public class RecoverableZooKeeper {
     this.maxMultiSize = maxMultiSize;
 
     try {
+      // KLRD: 连接ZK
       checkZk();
     } catch (Exception x) {
       /* ignore */
@@ -175,6 +181,7 @@ public class RecoverableZooKeeper {
   protected synchronized ZooKeeper checkZk() throws KeeperException {
     if (this.zk == null) {
       try {
+        // KLRD: 创建ZK客户端实例
         this.zk = new ZooKeeper(quorumServers, sessionTimeout, watcher);
       } catch (IOException ex) {
         LOG.warn("Unable to create ZooKeeper Connection", ex);

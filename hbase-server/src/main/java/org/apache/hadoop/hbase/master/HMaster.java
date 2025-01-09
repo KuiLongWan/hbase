@@ -458,7 +458,9 @@ public class HMaster extends HRegionServer implements MasterServices {
    * Remaining steps of initialization occur in {@link #finishActiveMasterInitialization()} after
    * the master becomes the active one.
    */
+  // KLRD: HMasterCommandLine.startMaster方法通过反射获取到该构造函数，并创建HMaster实例
   public HMaster(final Configuration conf) throws IOException {
+    // KLRD: 调用父类HRegionServer的构造方法（HMaster是HRegionServer的子类）
     super(conf);
     final Span span = TraceUtil.createSpan("HMaster.cxtor");
     try (Scope ignored = span.makeCurrent()) {
@@ -477,6 +479,9 @@ public class HMaster extends HRegionServer implements MasterServices {
         this.conf.getBoolean(HConstants.CLUSTER_DISTRIBUTED, false));
 
       // Disable usage of meta replicas in the master
+      // KLRD: HMaster的核心职责是管理集群的生命周期和元数据的完整性。
+      //  如果meta表的副本延迟或返回错误数据，可能会对整个集群的稳定性产生严重影响。
+      //  禁用副本可以确保HMaster只依赖最可靠（meta的主副本）的元数据来源，降低出错风险。
       this.conf.setBoolean(HConstants.USE_META_REPLICAS, false);
 
       decorateMasterConfiguration(this.conf);
@@ -487,6 +492,7 @@ public class HMaster extends HRegionServer implements MasterServices {
         this.conf.set("mapreduce.task.attempt.id", "hb_m_" + this.serverName.toString());
       }
 
+      // KLRD: 管理Master的状态的统计指标
       this.metricsMaster = new MetricsMaster(new MetricsMasterWrapperImpl(this));
 
       // preload table descriptor at startup
@@ -517,10 +523,12 @@ public class HMaster extends HRegionServer implements MasterServices {
         }
       }
 
+      // KLRD: 创建active的HMaster管理器，用于获取、监听backup master状态
       this.activeMasterManager = createActiveMasterManager(zooKeeper, serverName, this);
-
+      // KLRD: 集群ID
       cachedClusterId = new CachedClusterId(this, conf);
 
+      // KLRD: 通过ZK跟踪所有的RS（znode: /hbase/rs/...）
       this.regionServerTracker = new RegionServerTracker(zooKeeper, this);
       span.setStatus(StatusCode.OK);
     } catch (Throwable t) {
@@ -561,7 +569,9 @@ public class HMaster extends HRegionServer implements MasterServices {
       registerConfigurationObservers();
       Threads.setDaemonThreadRunning(new Thread(() -> TraceUtil.trace(() -> {
         try {
+          // KLRD: 启动基于Jetty实现的HMaster WebServer
           int infoPort = putUpJettyServer();
+          // KLRD: 启动ActiveMasterManager
           startActiveMasterManager(infoPort);
         } catch (Throwable t) {
           // Make sure we log the exception.
@@ -575,6 +585,7 @@ public class HMaster extends HRegionServer implements MasterServices {
       }, "HMaster.becomeActiveMaster")), getName() + ":becomeActiveMaster");
       // Fall in here even if we have been aborted. Need to run the shutdown services and
       // the super run call will do this for us.
+      // KLRD: 执行HRegionServer#run
       super.run();
     } finally {
       final Span span = TraceUtil.createSpan("HMaster exiting main loop");
@@ -902,7 +913,12 @@ public class HMaster extends HRegionServer implements MasterServices {
 
     // always initialize the MemStoreLAB as we use a region to store data in master now, see
     // localStore.
+    // KLRD: 初始化 MemStoreLAB，因为 Master 现在也使用 Region 来存储数据（localStore）
+    //  MemStoreLAB是HBase 2.0对MemStore的一个优化，引入了局部内存池和内存块重用机制，
+    //  显著提高了HBase在高并发写入场景下的写入性能。通过减少内存分配和回收的开销、减少内存碎片化、
+    //  降低垃圾回收压力，MemStoreLAB 提升了系统的吞吐量和稳定性。
     initializeMemStoreChunkCreator();
+    // KLRD: Master与文件系统交互的管理组件：roorDir, walDir, tempDir
     this.fileSystemManager = new MasterFileSystem(conf);
     this.walManager = new MasterWalManager(this);
 
@@ -917,6 +933,7 @@ public class HMaster extends HRegionServer implements MasterServices {
     // before it has called its run method and before RegionServer has done the reportForDuty.
     ClusterId clusterId = fileSystemManager.getClusterId();
     startupTaskGroup.addTask("Publishing Cluster ID " + clusterId + " in ZooKeeper");
+    // KLRD: 将clusterId写入zookeeper：/hbase/hbaseid
     ZKClusterId.setClusterId(this.zooKeeper, fileSystemManager.getClusterId());
     this.clusterId = clusterId.toString();
 
@@ -941,21 +958,24 @@ public class HMaster extends HRegionServer implements MasterServices {
     // initialize master local region
     masterRegion = MasterRegionFactory.create(this);
     rsListStorage = new MasterRegionServerList(masterRegion, this);
-
+    // KLRD: Master用于维护 online/dead RegionServer的，处理RegionServer启动、关闭、消亡
     this.serverManager = createServerManager(this, rsListStorage);
     if (
       !conf.getBoolean(HBASE_SPLIT_WAL_COORDINATED_BY_ZK, DEFAULT_HBASE_SPLIT_COORDINATED_BY_ZK)
     ) {
+      // KLRD: 管理WAL切分
       this.splitWALManager = new SplitWALManager(this);
     }
 
     tryMigrateMetaLocationsFromZooKeeper();
 
+    // KLRD: ProcedureExecutor是Master用于处理比较复杂操作的处理器，如处理：创建表、插入数据、查询数据等
     createProcedureExecutor();
     Map<Class<?>, List<Procedure<MasterProcedureEnv>>> procsByType = procedureExecutor
       .getActiveProceduresNoCopy().stream().collect(Collectors.groupingBy(p -> p.getClass()));
 
     // Create Assignment Manager
+    // KLRD: AssignmentManager 用于管理Region：创建、分配、迁移等
     this.assignmentManager = createAssignmentManager(this, masterRegion);
     this.assignmentManager.start();
     // TODO: TRSP can perform as the sub procedure for other procedures, so even if it is marked as
@@ -1014,6 +1034,7 @@ public class HMaster extends HRegionServer implements MasterServices {
     startupTaskGroup.addTask("Initializing meta table if this is a new deploy");
     InitMetaProcedure initMetaProc = null;
     // Print out state of hbase:meta on startup; helps debugging.
+    // KLRD: 检查是否需要初始化meta表（新集群）
     if (!this.assignmentManager.getRegionStates().hasTableRegionStates(TableName.META_TABLE_NAME)) {
       Optional<InitMetaProcedure> optProc = procedureExecutor.getProcedures().stream()
         .filter(p -> p instanceof InitMetaProcedure).map(o -> (InitMetaProcedure) o).findAny();
@@ -1035,6 +1056,10 @@ public class HMaster extends HRegionServer implements MasterServices {
 
     // start up all service threads.
     startupTaskGroup.addTask("Initializing master service threads");
+    // KLRD: 开启各种服务线程，如：
+    //  1.ProcedureExecutor的WorkThread
+    //  2.日志清理服务
+    //  3.HFile清理服务
     startServiceThreads();
     // wait meta to be initialized after we start procedure executor
     if (initMetaProc != null) {
@@ -1052,6 +1077,7 @@ public class HMaster extends HRegionServer implements MasterServices {
     String statusStr = "Wait for region servers to report in";
     MonitoredTask waitRegionServer = startupTaskGroup.addTask(statusStr);
     LOG.info(Objects.toString(waitRegionServer));
+    // KLRD: 等待集群中的HRegionServer启动成功（数量达到某个阈值即可）
     waitForRegionServers(waitRegionServer);
 
     // Check if master is shutting down because issue initializing regionservers or balancer.
@@ -1066,6 +1092,7 @@ public class HMaster extends HRegionServer implements MasterServices {
     // as procedures run -- in particular SCPs for crashed servers... One should put up hbase:meta
     // if it is down. It may take a while to come online. So, wait here until meta if for sure
     // available. That's what waitForMetaOnline does.
+    // KLRD: 等待meta表上线
     if (!waitForMetaOnline()) {
       return;
     }
@@ -1426,6 +1453,7 @@ public class HMaster extends HRegionServer implements MasterServices {
     throws IOException {
     // We put this out here in a method so can do a Mockito.spy and stub it out
     // w/ a mocked up ServerManager.
+    // KLRD: 初始化集群连接：ZK、RPC客户端
     setupClusterConnection();
     return new ServerManager(master, storage);
   }
@@ -1554,6 +1582,7 @@ public class HMaster extends HRegionServer implements MasterServices {
     // AccessController#postCompletedCreateTableAction
     executorService.startExecutorService(executorService.new ExecutorConfig()
       .setExecutorType(ExecutorType.MASTER_TABLE_OPERATIONS).setCorePoolSize(1));
+    // KLRD: 启动过程处理器
     startProcedureExecutor();
 
     // Create log cleaner thread pool
@@ -2367,7 +2396,18 @@ public class HMaster extends HRegionServer implements MasterServices {
     return procId;
   }
 
+  /**
+   * KLRD:
+   *  1.构建本Master成为备份节点的znode路径
+   *  2.所有Master启动时都创建该znode，表示自己启动时为Backup Master
+   *  3.如果自己是Backup，则阻塞，直到集群有Active master
+   *  4.竞争成为Active Master
+   *    4.1创建Active znode，如果成功：
+   *      a.更改状态，b.删除关于自己的backup znode信息
+   *    4.2初始化active master必要服务
+   */
   private void startActiveMasterManager(int infoPort) throws KeeperException {
+    // KLRD: 1.构建本Master成为备份节点的znode路径：/hbase/backup-masters/${servername}
     String backupZNode = ZNodePaths.joinZNode(zooKeeper.getZNodePaths().backupMasterAddressesZNode,
       serverName.toString());
     /*
@@ -2378,16 +2418,22 @@ public class HMaster extends HRegionServer implements MasterServices {
      * delete this node for us since it is ephemeral.
      */
     LOG.info("Adding backup master ZNode " + backupZNode);
+    // KLRD: 所有Master启动时都创建该znode，表示自己启动时为Backup Master
     if (!MasterAddressTracker.setMasterAddress(zooKeeper, backupZNode, serverName, infoPort)) {
       LOG.warn("Failed create of " + backupZNode + " by " + serverName);
     }
     this.activeMasterManager.setInfoPort(infoPort);
     int timeout = conf.getInt(HConstants.ZK_SESSION_TIMEOUT, HConstants.DEFAULT_ZK_SESSION_TIMEOUT);
     // If we're a backup master, stall until a primary to write this address
+    // KLRD: 3.如果自己是Backup，则阻塞，直到集群有Active master，
+    //  即，集群中有机器完成了下面的步骤4，然后所有没成为Active master的机器（Backup Master）
+    //  都会执行到步骤4，并且阻塞在那里，直到自己成为Active Master
     if (conf.getBoolean(HConstants.MASTER_TYPE_BACKUP, HConstants.DEFAULT_MASTER_TYPE_BACKUP)) {
       LOG.debug("HMaster started in backup mode. Stalling until master znode is written.");
       // This will only be a minute or so while the cluster starts up,
       // so don't worry about setting watches on the parent znode
+      // KLRD: 本Master不是Active，则等待，直到HBase集群有Active Master
+      //  条件：znode /hbase/master 有值
       while (!activeMasterManager.hasActiveMaster()) {
         LOG.debug("Waiting for master address and cluster state znode to be written.");
         Threads.sleep(timeout);
@@ -2401,7 +2447,13 @@ public class HMaster extends HRegionServer implements MasterServices {
     // be permanent in the MEM.
     startupTaskGroup = TaskMonitor.createTaskGroup(true, "Master startup");
     try {
+      // KLRD: 4.竞争成为Active Master
+      //  如果A、B为Master，且A为Active，那么在集群启动时：
+      //  A：会执行到这里，并注册成为Active Master
+      //  B：首先阻塞在步骤3，直到A竞争成为Active Master，然后B也执行到这里并阻塞，
+      //   直到自己成为Active（A发生了故障，集群没有Active Master）
       if (activeMasterManager.blockUntilBecomingActiveMaster(timeout, startupTaskGroup)) {
+        // KLRD: 4.2初始化active master必要服务
         finishActiveMasterInitialization();
       }
     } catch (Throwable t) {
@@ -3301,6 +3353,9 @@ public class HMaster extends HRegionServer implements MasterServices {
   public static void main(String[] args) {
     LOG.info("STARTING service " + HMaster.class.getSimpleName());
     VersionInfo.logVersion();
+    // KLRD:
+    //  集群使用 hbase-daemons.sh start master 启动HMaster，args参数：[start master]
+    //  其中doMain最终调用的是HMaterCommandLine.run方法
     new HMasterCommandLine(HMaster.class).doMain(args);
   }
 

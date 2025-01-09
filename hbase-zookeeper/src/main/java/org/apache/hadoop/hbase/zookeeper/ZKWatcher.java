@@ -152,7 +152,7 @@ public class ZKWatcher implements Watcher, Abortable, Closeable {
   public ZKWatcher(Configuration conf, String identifier, Abortable abortable,
     boolean canCreateBaseZNode, boolean clientZK) throws IOException, ZooKeeperConnectionException {
     this.conf = conf;
-    if (clientZK) {
+    if (clientZK) { // KLRD clientZK默认为false
       String clientZkQuorumServers = ZKConfig.getClientZKQuorumServersString(conf);
       String serverZkQuorumServers = ZKConfig.getZKQuorumServersString(conf);
       if (clientZkQuorumServers != null) {
@@ -174,13 +174,18 @@ public class ZKWatcher implements Watcher, Abortable, Closeable {
     // handle the syncconnect event.
     this.identifier = identifier + "0x0";
     this.abortable = abortable;
+    // KLRD: HBase在ZK上的各种znode信息
     this.znodePaths = new ZNodePaths(conf);
+    // KLRD: 监听器
     PendingWatcher pendingWatcher = new PendingWatcher();
+    // KLRD: 建立与ZK的连接
     this.recoverableZooKeeper =
       RecoverableZooKeeper.connect(conf, quorum, pendingWatcher, identifier);
     pendingWatcher.prepare(this);
+    // KLRD: HRegionServer已经启动，但集群中没有Master时，该参数为true
     if (canCreateBaseZNode) {
       try {
+        // KLRD: 在Zookeeper上创建属于HBase的基础znode路径
         createBaseZNodes();
       } catch (ZooKeeperConnectionException zce) {
         try {
@@ -458,8 +463,14 @@ public class ZKWatcher implements Watcher, Abortable, Closeable {
    * for subsequent CREATE/DELETE operations on child nodes.
    */
   public List<String> getMetaReplicaNodesAndWatchChildren() throws KeeperException {
+    // KLRD: 获取/hbase下的所有子节点
+    //  meta信息在/hbase下可能有多个关于meta Region信息，每个都以/hbase/meta-region-server开头
+    //  假如meta有两个Region，那么可能得znode为：
+    //    /hbase/meta-region-server-1
+    //    /hbase/meta-region-server-2
     List<String> childrenOfBaseNode =
       ZKUtil.listChildrenAndWatchForNewChildren(this, znodePaths.baseZNode);
+    // KLRD: 过滤出存储meta Region的znode（以/hbase/meta-region-server为前缀）
     return filterMetaReplicaNodes(childrenOfBaseNode);
   }
 

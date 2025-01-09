@@ -41,6 +41,7 @@ public abstract class ClientServiceCallable<T>
 
   @Override
   protected void setStubByServiceName(ServerName serviceName) throws IOException {
+    // TODO @KLW getConnection -> ClusterConnection(即ConnectionImplementation)
     setStub(getConnection().getClient(serviceName));
   }
 

@@ -52,6 +52,7 @@ public class RpcServerFactory {
   public static RpcServer createRpcServer(final Server server, final String name,
     final List<BlockingServiceAndInterface> services, final InetSocketAddress bindAddress,
     Configuration conf, RpcScheduler scheduler, boolean reservoirEnabled) throws IOException {
+    // KLRD: 获取RPC服务端class，HBase 2.0以前默认使用NioRpcServer，2.0以后默认使用NettyRpcServer
     String rpcServerClass =
       conf.get(CUSTOM_RPC_SERVER_IMPL_CONF_KEY, NettyRpcServer.class.getName());
     StringBuilder servicesList = new StringBuilder();
@@ -62,6 +63,12 @@ public class RpcServerFactory {
       servicesList.append(sd.getFullName());
     }
     LOG.info("Creating " + rpcServerClass + " hosting " + servicesList);
+    // KLRD: 通过反射的方式获取NettyRpcServer构造方法，然后创建对象
+    //  其中services有：
+    //    ClientService.BlockingInterface.class
+    //    AdminService.BlockingInterface.class
+    //    ClientMetaService.BlockingInterface.class
+    // KLTD: 阅读NettyRpcServer构造方法
     return ReflectionUtils.instantiateWithCustomCtor(rpcServerClass,
       new Class[] { Server.class, String.class, List.class, InetSocketAddress.class,
         Configuration.class, RpcScheduler.class, boolean.class },

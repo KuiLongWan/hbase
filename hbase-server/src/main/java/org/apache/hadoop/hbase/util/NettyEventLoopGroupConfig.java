@@ -61,7 +61,12 @@ public class NettyEventLoopGroupConfig {
   }
 
   public NettyEventLoopGroupConfig(Configuration conf, String threadPoolName) {
+    // KLRD: Epoll是Linux提供的专门用于处理大量并发连接的高效I/O多路复用机制
+    //  在大量并发的情况下，它比传统的select或poll提供更好的性能
+    //  Epoll可以减少操作系统内核与用户空间之间的系统调用开销，特别是在大量连接的情况下，能够有效提升系统吞吐量
     final boolean useEpoll = useEpoll(conf);
+    // KLRD: RPC服务端（Netty实现）在处理客户端请求时使用的事件循环线程的数量，默认为0
+    //  如果worker=0，在创建group时会修改为：CPU内核数*2
     final int workerCount = conf.getInt(NETTY_WORKER_COUNT_KEY,
       // For backwards compatibility we also need to consider
       // "hbase.netty.eventloop.rpcserver.thread.count"

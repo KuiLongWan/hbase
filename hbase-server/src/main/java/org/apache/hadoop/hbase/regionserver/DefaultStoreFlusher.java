@@ -55,7 +55,7 @@ public class DefaultStoreFlusher extends StoreFlusher {
     StoreFileWriter writer;
     try {
       // TODO: We can fail in the below block before we complete adding this flush to
-      // list of store files. Add cleanup of anything put on filesystem if we fail.
+      //  list of store files. Add cleanup of anything put on filesystem if we fail.
       synchronized (flushLock) {
         status.setStatus("Flushing " + store + ": creating writer");
         // Write the map out to the disk

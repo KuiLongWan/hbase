@@ -82,7 +82,12 @@ public class MetaRegionLocationCache extends ZKListener {
 
   public MetaRegionLocationCache(ZKWatcher zkWatcher) {
     super(zkWatcher);
+
+    // KLRD: 用于缓存meta表的元数据信息
     cachedMetaLocations = new CopyOnWriteArrayMap<>();
+    // KLRD: 将this对象注册到ZK的Watcher上
+    //  this是ZKListener的子类，本类实现了ZKListener中的四个方法（用途参考ZKListener中的注释）
+    //  本类实际也帮助HMaster/HRegionServer监听存储在ZK上的meta相关的元数据信息
     watcher.registerListener(this);
     // Populate the initial snapshot of data from meta znodes.
     // This is needed because stand-by masters can potentially start after the initial znode
@@ -92,6 +97,7 @@ public class MetaRegionLocationCache extends ZKListener {
     ThreadFactory threadFactory = new ThreadFactoryBuilder().setDaemon(true).build();
     RetryCounterFactory retryFactory = new RetryCounterFactory(Integer.MAX_VALUE,
       SLEEP_INTERVAL_MS_BETWEEN_RETRIES, SLEEP_INTERVAL_MS_MAX);
+    // KLRD: 从ZK获取meta表的位置信息
     threadFactory.newThread(() -> loadMetaLocationsFromZk(retryFactory.create(), ZNodeOpType.INIT))
       .start();
   }
@@ -104,8 +110,11 @@ public class MetaRegionLocationCache extends ZKListener {
   private void loadMetaLocationsFromZk(RetryCounter retryCounter, ZNodeOpType opType) {
     TraceUtil.trace(() -> {
       List<String> znodes = null;
-      while (retryCounter.shouldRetry()) {
+      while (retryCounter.shouldRetry()) { // KLRD: 可重试
         try {
+          // KLRD:
+          //  1.从ZK上获取znode为/hbase/meta-region-server的数据
+          //  2.监听/hbase/meta-region-server的子znode的变化
           znodes = watcher.getMetaReplicaNodesAndWatchChildren();
           break;
         } catch (KeeperException ke) {
@@ -134,6 +143,8 @@ public class MetaRegionLocationCache extends ZKListener {
         // No new meta znodes got added.
         return;
       }
+
+      // KLRD: znodes是所有以/hbase/meta-region-server为前缀的集合，集合中每一个znode都代表了一个meta region的位置
       for (String znode : znodes) {
         String path = ZNodePaths.joinZNode(watcher.getZNodePaths().baseZNode, znode);
         updateMetaLocation(path, opType);
@@ -161,10 +172,14 @@ public class MetaRegionLocationCache extends ZKListener {
   }
 
   private void updateMetaLocation(String path, ZNodeOpType opType) {
+    /**
+     * KLRD: 更新meta location信息
+     */
     if (!isValidMetaPath(path)) {
       return;
     }
     LOG.debug("Updating meta znode for path {}: {}", path, opType.name());
+    // KLRD: meta副本id
     int replicaId = watcher.getZNodePaths().getMetaReplicaIdFromPath(path);
     RetryCounter retryCounter = retryCounterFactory.create();
     HRegionLocation location = null;
@@ -198,6 +213,7 @@ public class MetaRegionLocationCache extends ZKListener {
       cachedMetaLocations.remove(replicaId);
       return;
     }
+    // KLRD: 将meta location放入缓存
     cachedMetaLocations.put(replicaId, location);
   }
 

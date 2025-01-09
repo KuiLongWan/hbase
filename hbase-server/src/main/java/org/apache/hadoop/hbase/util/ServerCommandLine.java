@@ -130,6 +130,10 @@ public abstract class ServerCommandLine extends Configured implements Tool {
     logJVMInfo();
   }
 
+  @Override public int run(String[] args) throws Exception {
+    return 0;
+  }
+
   /**
    * Parse and run the given command line. This will exit the JVM with the exit code returned from
    * <code>run()</code>. If return code is 0, wait for atmost 30 seconds for all non-daemon threads

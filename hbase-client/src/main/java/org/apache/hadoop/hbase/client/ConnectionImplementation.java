@@ -193,6 +193,8 @@ public class ConnectionImplementation implements ClusterConnection, Closeable {
   // it would likely change semantics if we change it because the NonceGenerator is selected
   // from configuration passed in as a parameter of the constructor. This has been cleaned up
   // in later branches.
+
+  // KLW: 生成唯一的随机数（nonce），用于防止重放攻击以及保证请求的幂等性
   private static volatile NonceGenerator nonceGenerator = null;
   /** The nonce generator lock. Only taken when creating Connection, which gets a private copy. */
   private static final Object nonceGeneratorCreateLock = new Object();
@@ -317,6 +319,7 @@ public class ConnectionImplementation implements ClusterConnection, Closeable {
     this.alternateBufferedMutatorClassName = this.conf.get(BufferedMutator.CLASSNAME_KEY);
 
     try {
+      // KLRD: 基于ZK的注册中心，相当于ZK客户端
       if (registry == null) {
         this.registry = ConnectionRegistryFactory.getRegistry(conf);
       } else {
@@ -331,8 +334,9 @@ public class ConnectionImplementation implements ClusterConnection, Closeable {
       } else {
         this.metrics = null;
       }
+      // KLRD: Meta缓存
       this.metaCache = new MetaCache(this.metrics);
-
+      // KLRD: 创建RPC客户端，NettyRpcClient，基于Netty+protobuf实现
       this.rpcClient = RpcClientFactory.createClient(this.conf, this.clusterId, this.metrics);
       this.rpcControllerFactory = RpcControllerFactory.instantiate(conf);
       this.rpcCallerFactory = RpcRetryingCallerFactory.instantiate(conf, connectionConfig,
@@ -890,6 +894,8 @@ public class ConnectionImplementation implements ClusterConnection, Closeable {
     if (tableName == null || tableName.getName().length == 0) {
       throw new IllegalArgumentException("table name cannot be null or zero length");
     }
+    // KLRD: 定位给定row的Region信息，即该row到底归哪个RS管
+    //  本方法执行流程：
     if (tableName.equals(TableName.META_TABLE_NAME)) {
       return locateMeta(tableName, useCache, replicaId);
     } else {
@@ -1410,9 +1416,12 @@ public class ConnectionImplementation implements ClusterConnection, Closeable {
     if (isDeadServer(serverName)) {
       throw new RegionServerStoppedException(serverName + " is dead.");
     }
+    // key = BlockingInterface.class.getName() + "@" + serverName
+    // org..ClientProtos$ClientService$BlockingInterface@kylin,35699,1729498477472
     String key =
       getStubKey(ClientProtos.ClientService.BlockingInterface.class.getName(), serverName);
     return (ClientProtos.ClientService.BlockingInterface) computeIfAbsentEx(stubs, key, () -> {
+      // KLRD: channel -> AbstractRpcClient$BlockingRpcChannelImplementation
       BlockingRpcChannel channel =
         this.rpcClient.createBlockingRpcChannel(serverName, user, rpcTimeout);
       return ClientProtos.ClientService.newBlockingStub(channel);

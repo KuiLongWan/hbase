@@ -267,6 +267,9 @@ public class HRegionServer extends Thread
   /**
    * A map from RegionName to current action in progress. Boolean value indicates: true - if open
    * region action in progress false - if close region action in progress
+   *
+   * KLRD: 用于管理和跟踪该 RegionServer 上的 Region 状态
+   *   true: 正在开启Region, false: 正在关闭Region
    */
   private final ConcurrentMap<byte[], Boolean> regionsInTransitionInRS =
     new ConcurrentSkipListMap<>(Bytes.BYTES_COMPARATOR);
@@ -307,7 +310,9 @@ public class HRegionServer extends Thread
   protected TableDescriptors tableDescriptors;
 
   // Replication services. If no replication, this handler will be null.
+  /** KLRD: 集群间通过WAL进行数据同步的服务，数据读取端 */
   private ReplicationSourceService replicationSourceHandler;
+  /** KLRD: 集群间通过WAL进行数据同步的服务，数据接受取端 */
   private ReplicationSinkService replicationSinkHandler;
 
   // Compactions
@@ -343,6 +348,7 @@ public class HRegionServer extends Thread
 
   private volatile boolean dataFsOk;
   private HFileSystem dataFs;
+  /** KLRD: HDFS文件系统客户端，负责 WAL 文件的存储 */
   private HFileSystem walFs;
 
   // Set when a report to the master comes back with a message asking us to
@@ -404,6 +410,8 @@ public class HRegionServer extends Thread
   /**
    * ChoreService used to schedule tasks that we want to run periodically
    */
+  // KLRD: 周期性任务调度的服务类，如：
+  //  RS健康检查、心跳机制、清理无用的HFile、监控存储空间、WAL split、定期检查Zookeeper状态等
   private ChoreService choreService;
 
   /**
@@ -542,6 +550,7 @@ public class HRegionServer extends Thread
    */
   final ServerNonceManager nonceManager;
 
+  /** KLRD: 用于处理用户认证和权限相关的功能 */
   private UserProvider userProvider;
 
   protected final RSRpcServices rpcServices;
@@ -563,6 +572,7 @@ public class HRegionServer extends Thread
 
   private volatile ThroughputController flushThroughputController;
 
+  /** KLRD: 为批量数据加载提供安全控制：权限验证等 */
   private SecureBulkLoadManager secureBulkLoadManager;
 
   private FileSystemUtilizationChore fsUtilizationChore;
@@ -597,6 +607,7 @@ public class HRegionServer extends Thread
    * with the Master as much as possible. See {@link #startServices}.
    */
   public HRegionServer(final Configuration conf) throws IOException {
+    // KLRD: HRegionServer是Thread的子类，这里是设置线程名
     super("RegionServer"); // thread name
     final Span span = TraceUtil.createSpan("HRegionServer.cxtor");
     try (Scope ignored = span.makeCurrent()) {
@@ -605,23 +616,36 @@ public class HRegionServer extends Thread
       this.dataFsOk = true;
       this.masterless = conf.getBoolean(MASTERLESS_CONFIG_NAME, false);
       this.eventLoopGroupConfig = setupNetty(this.conf);
+      // KLRD: 保证RS用于其他服务的内存≥20%（剩下80%分别用于MemStore、BlockCache，各40%）
       MemorySizeUtil.checkForClusterFreeHeapMemoryLimit(this.conf);
       HFile.checkHFileVersion(this.conf);
       checkCodecs(this.conf);
+      // KLRD: 用于处理用户权限
       this.userProvider = UserProvider.instantiate(conf);
+      // KLRD: 设置短路读
+      //  - 默认在HDFS中，即使数据就在本地磁盘，也要通过DataNode读取
+      //    虽然可靠，但引入了额外的网络和进程间通信的开销
+      //  - 短路读取是HDFS提供的一种优化技术，允许HBase直接从本地文件系统读取数据，
+      //    绕过DataNode进程，从而减少网络延迟和CPU开销，提高读性能。
       FSUtils.setupShortCircuitRead(this.conf);
 
       // Disable usage of meta replicas in the regionserver
+      // KLRD: RS中禁用META表的副本：
+      //  一致性：META副本可能会有轻微的延迟，禁用副本可确保RegionServer总是访问最新的META数据
       this.conf.setBoolean(HConstants.USE_META_REPLICAS, false);
       // Config'ed params
+      // KLRD: RS相关线程唤醒时间间隔，下面还设置了检测compact和flush间隔
       this.threadWakeFrequency = conf.getInt(HConstants.THREAD_WAKE_FREQUENCY, 10 * 1000);
       this.compactionCheckFrequency = conf.getInt(PERIOD_COMPACTION, this.threadWakeFrequency);
       this.flushCheckFrequency = conf.getInt(PERIOD_FLUSH, this.threadWakeFrequency);
+      // KLRD: RS与Master通信时间间隔
       this.msgInterval = conf.getInt("hbase.regionserver.msginterval", 3 * 1000);
 
       this.sleeper = new Sleeper(this.msgInterval, this);
 
       boolean isNoncesEnabled = conf.getBoolean(HConstants.HBASE_RS_NONCES_ENABLED, true);
+      // KLRD: ServerNonceManager通过客户端请求携带的nonce（Number used once）值来保证请求的唯一性，防止重放攻击，确保事务顺序和一致性
+      //  nonce一般情况下为一个数字，客户端进行写入（插入、更新）操作时携带，RS收到后由ServerNonceManager管理
       this.nonceManager = isNoncesEnabled ? new ServerNonceManager(this.conf) : null;
 
       this.operationTimeout = conf.getInt(HConstants.HBASE_CLIENT_OPERATION_TIMEOUT,
@@ -637,13 +661,18 @@ public class HRegionServer extends Thread
       this.stopped = false;
 
       initNamedQueueRecorder(conf);
+      // KLRD: 创建rpc服务端(RSRpcService)，里面会创建NettyRpcServer，
+      //  RS会启动Client、Admin、ClientMeta相关Rpc服务
       rpcServices = createRpcServices();
       useThisHostnameInstead = getUseThisHostnameInstead(conf);
       String hostName = StringUtils.isBlank(useThisHostnameInstead)
         ? this.rpcServices.isa.getHostName()
         : this.useThisHostnameInstead;
+      // KLRD: 生成此RS的服务名
       serverName = ServerName.valueOf(hostName, this.rpcServices.isa.getPort(), this.startcode);
 
+      // KLRD: rpcControllerFactory：Rpc Controller工厂
+      //       rpcRetryingCallerFactory：Rpc Call重试机制工厂
       rpcControllerFactory = RpcControllerFactory.instantiate(this.conf);
       rpcRetryingCallerFactory = RpcRetryingCallerFactory.instantiate(this.conf,
         clusterConnection == null ? null : clusterConnection.getConnectionMetrics());
@@ -658,6 +687,11 @@ public class HRegionServer extends Thread
       Superusers.initialize(conf);
       regionServerAccounting = new RegionServerAccounting(conf);
 
+      // KLRD: 用于标志HMaster是否不管理某些特定表
+      //  true，HMaster不负责这些表的管理工作，RegionServer需要承担更多的任务。
+      //  主要用于协调RegionServer和HMaster之间的职责分配，尤其是在HBase集群中的故障恢复或特殊配置场景下。
+      //  特定表：hbase:meta, hbase:namespace, hbase:deadregion, hbase:flushinfo,
+      //          hbase:backup, hbase:security, hbase:admin
       boolean isMasterNotCarryTable =
         this instanceof HMaster && !LoadBalancer.isTablesOnMaster(conf);
 
@@ -670,6 +704,8 @@ public class HRegionServer extends Thread
       uncaughtExceptionHandler =
         (t, e) -> abort("Uncaught exception in executorService thread " + t.getName(), e);
 
+      // KLRD: 初始化FSClient（File System Client）
+      //  会初始化两个FSClient：walFs， dataFs
       initializeFileSystem();
 
       this.configurationManager = new ConfigurationManager();
@@ -677,26 +713,53 @@ public class HRegionServer extends Thread
 
       // Some unit tests don't need a cluster, so no zookeeper at all
       // Open connection to zookeeper and set primary watcher
+      // KLRD: 获取ZK客户端，建立与ZK连接，ZKWatcher内部有一个RecoverableZooKeeper成员对象，该对象内部持有Zookeeper实例
+      //
       zooKeeper = new ZKWatcher(conf, getProcessName() + ":" + rpcServices.isa.getPort(), this,
         canCreateBaseZNode());
       // If no master in cluster, skip trying to track one or look for a cluster status.
+      // KLRD:
       if (!this.masterless) {
         if (
           conf.getBoolean(HBASE_SPLIT_WAL_COORDINATED_BY_ZK, DEFAULT_HBASE_SPLIT_COORDINATED_BY_ZK)
         ) {
           this.csm = new ZkCoordinatedStateManager(this);
         }
-
+        /**
+         * KLRD:
+         *  ZKListener {
+         *    // ZKListener中持有ZKWatcher（即持有Zookeeper对象）
+         *    private ZKWatcher watcher;
+         *    // 有四个用于处理znode改变的回调方法：
+         *    nodeCreated()：znode被创建
+         *    nodeDeleted()：znode被删除
+         *    nodeDataChanged():znode数据发生更改
+         *    nodeChildrenChanged()：znode子节点发生改变（直接子节点）
+         *  }
+         *  MasterAddressTracker和ClusterStatusTracker都是ZKListener的子类：
+         *   MasterAddressTracker extends ZKNodeTracker extends ZKListener
+         *   ClusterStatusTracker extends ZKNodeTracker extends ZKListener
+         *  他们会检查特定的znode是否存在，如果存在则注册监听
+         */
+        // KLRD: 通过ZK监听Master地址，znode：/hbase/master
         masterAddressTracker = new MasterAddressTracker(getZooKeeper(), this);
         masterAddressTracker.start();
-
+        // KLRD: 通过ZK监听集群运行状态，znode：/hbase/running，临时节点，表示HBase集群是否处于运行状态
+        //  当HBase启动时，HMaster会在ZooKeeper中创建这个节点，以表明HBase集群正在正常运行
         clusterStatusTracker = new ClusterStatusTracker(zooKeeper, this);
         clusterStatusTracker.start();
       } else {
         masterAddressTracker = null;
         clusterStatusTracker = null;
       }
+      // KLRD: 启动RPC服务端，主要是启动RpcServer，2.0前是SimpleRpcServer(基于NIO)，2.0后是NettyRpcServer
       this.rpcServices.start(zooKeeper);
+      // KLRD: MetaRegionLocationCache：获取、缓存、监听 meta表的Region位置信息（在哪个RS）
+      //  原本在HMaster中，在HBASE-26150任务中放到RegionServer中
+      //  目的：使RegionServer也支持ClientMetaService接口，从而改进客户端与集群的连接管理，
+      //    降低对Master节点的依赖，提升系统的可靠性和扩展性。
+      //  为未来优化铺路: 通过让RegionServer支持meta数据服务，HBase逐步向去中心化方向发展，
+      //    未来的连接注册表（Connection Registry）管理将逐渐替代传统Master Registry的功能。
       this.metaRegionLocationCache = new MetaRegionLocationCache(zooKeeper);
       if (!(this instanceof HMaster)) {
         // do not create this field for HMaster, we have another region server tracker for HMaster.
@@ -711,8 +774,12 @@ public class HRegionServer extends Thread
       // class HRS. TODO.
       int choreServiceInitialSize =
         conf.getInt(CHORE_SERVICE_INITIAL_POOL_SIZE, DEFAULT_CHORE_SERVICE_INITIAL_POOL_SIZE);
+
+      // KLRD: 周期性任务调度的服务类，如：
+      //  RS健康检查、心跳机制、清理无用的HFile、监控存储空间、WAL split、定期检查Zookeeper状态等
       this.choreService = new ChoreService(getName(), choreServiceInitialSize, true);
       this.executorService = new ExecutorService(getName());
+      // KLRD: 启动webui
       putUpWebUI();
       span.setStatus(StatusCode.OK);
     } catch (Throwable t) {
@@ -795,7 +862,9 @@ public class HRegionServer extends Thread
       CommonFSUtils.setFsDefault(this.conf, walDirUri);
     }
     // init the WALFs
+    // KLRD: 创建一个专门用于WAL的FSClient
     this.walFs = new HFileSystem(this.conf, useHBaseChecksum);
+    // KLRD: WAL根目录：/hbase/WALs
     this.walRootDir = CommonFSUtils.getWALRootDir(this.conf);
     // Set 'fs.defaultFS' to match the filesystem on hbase.rootdir else
     // underlying hadoop hdfs accessors will be going against wrong filesystem
@@ -806,7 +875,9 @@ public class HRegionServer extends Thread
       CommonFSUtils.setFsDefault(this.conf, rootDirUri);
     }
     // init the filesystem
+    // KLRD: 创建一个专门用于读写HFile的FSClient
     this.dataFs = new HFileSystem(this.conf, useHBaseChecksum);
+    // KLRD: HBase数据根目录：/hbase/data
     this.dataRootDir = CommonFSUtils.getRootDir(this.conf);
     this.tableDescriptors = new FSTableDescriptors(this.dataFs, this.dataRootDir,
       !canUpdateTableDescriptor(), cacheTableDescriptor());
@@ -939,9 +1010,11 @@ public class HRegionServer extends Thread
   private void preRegistrationInitialization() {
     final Span span = TraceUtil.createSpan("HRegionServer.preRegistrationInitialization");
     try (Scope ignored = span.makeCurrent()) {
+      // KLRD: 等待Master启动、集群状态OK
       initializeZooKeeper();
       setupClusterConnection();
       // Setup RPC client for master communication
+      // KLRD: 创建与Master进行通信的Rpc客户端
       this.rpcClient = RpcClientFactory.createClient(conf, clusterId,
         new InetSocketAddress(this.rpcServices.isa.getAddress(), 0),
         clusterConnection.getConnectionMetrics());
@@ -974,10 +1047,13 @@ public class HRegionServer extends Thread
     // Create the master address tracker, register with zk, and start it. Then
     // block until a master is available. No point in starting up if no master
     // running.
+    // KLRD: 将Master地址追踪器注册到ZK，启动追踪器，直到集群Master已启动，znode: /hbase/master
+    //  若Master不可以，光启动RS没意义
     blockAndCheckIfStopped(this.masterAddressTracker);
 
     // Wait on cluster being up. Master will set this flag up in zookeeper
     // when ready.
+    // KLRD: 将集群状态追踪器注册到ZK，启动追踪器，直到集群状态OK，znode: /hbase/running
     blockAndCheckIfStopped(this.clusterStatusTracker);
 
     // If we are HMaster then the cluster id should have already been set.
@@ -985,9 +1061,10 @@ public class HRegionServer extends Thread
       // Retrieve clusterId
       // Since cluster status is now up
       // ID should have already been set by HMaster
+      // KLRD: 经过上面两个检查，此时集群状态已经OK，那么clusterId已经被HMaster设置好了
       try {
         clusterId = ZKClusterId.readClusterIdZNode(this.zooKeeper);
-        if (clusterId == null) {
+        if (clusterId == null) { // KLRD: 启动异常，退出：没有获取到clusterId
           this.abort("Cluster ID has not been set");
         }
         LOG.info("ClusterId : " + clusterId);
@@ -1045,6 +1122,7 @@ public class HRegionServer extends Thread
     }
     try {
       // Do pre-registration initializations; zookeeper, lease threads, etc.
+      // KLRD: 等待Master启动、集群状态OK，创建与Master进行通信的Rpc客户端
       preRegistrationInitialization();
     } catch (Throwable e) {
       abort("Fatal exception during initialization", e);
@@ -1067,12 +1145,17 @@ public class HRegionServer extends Thread
             new RetryCounterFactory(Integer.MAX_VALUE, this.sleeper.getPeriod(), 1000 * 60 * 5);
           RetryCounter rc = rcf.create();
           while (keepLooping()) {
+            // KLRD: RS发送请求将自己注册到Master，并等待Master响应（收到响应代表注册成功，Master就可以给该RS分配任务）
             RegionServerStartupResponse w = reportForDuty();
-            if (w == null) {
+            if (w == null) { // KLRD: 失败，等待重试
               long sleepTime = rc.getBackoffTimeAndIncrementAttempts();
               LOG.warn("reportForDuty failed; sleeping {} ms and then retrying.", sleepTime);
               this.sleeper.sleep(sleepTime);
             } else {
+              // KLRD: RS成功将自己注册到Master，并受到相应，RS根据相应做一些配置对其和其他事情：
+              //  1. 配置信息与Master同步
+              //  2.本RS的WAL目录，开启通过WAL进行集群间数据同步的能力
+              //  3.启动RS所有服务、线程
               handleReportForDutyResponse(w);
               break;
             }
@@ -1101,8 +1184,9 @@ public class HRegionServer extends Thread
       long lastMsg = EnvironmentEdgeManager.currentTime();
       long oldRequestCount = -1;
       // The main run loop.
+      // KLRD: 循环发送心跳给Master，直到发生异常，如集群未启动、RS出现故障等
       while (!isStopped() && isHealthy()) {
-        if (!isClusterUp()) {
+        if (!isClusterUp()) { // KLRD: 集群未启动，关闭RS
           if (onlineRegions.isEmpty()) {
             stop("Exiting; cluster shutdown set and not carrying any regions");
           } else if (!this.stopping) {
@@ -1130,6 +1214,7 @@ public class HRegionServer extends Thread
           }
         }
         long now = EnvironmentEdgeManager.currentTime();
+        // KLRD: 发送心跳信息给Master
         if ((now - lastMsg) >= msgInterval) {
           tryRegionServerReport(lastMsg, now);
           lastMsg = EnvironmentEdgeManager.currentTime();
@@ -1631,11 +1716,14 @@ public class HRegionServer extends Thread
     throws IOException {
     try {
       boolean updateRootDir = false;
+      // KLRD: 解析从HMaster返回的配置信息，并根据这些信息对RegionServer进行配置更新
       for (NameStringPair e : c.getMapEntriesList()) {
         String key = e.getName();
         // The hostname the master sees us as.
         if (key.equals(HConstants.KEY_FOR_HOSTNAME_SEEN_BY_MASTER)) {
+          // KLRD: 从Master角度看到的当前RS的hostname
           String hostnameFromMasterPOV = e.getValue();
+          // KLRD: 生成当前RS的ServerName
           this.serverName =
             ServerName.valueOf(hostnameFromMasterPOV, rpcServices.isa.getPort(), this.startcode);
           if (
@@ -1659,6 +1747,8 @@ public class HRegionServer extends Thread
         }
 
         String value = e.getValue();
+        // KLRD: 从HMaster返回的根目录与RS当前的配置根目录不一致，需要将updateRootDir设置为true
+        //  后面（initializeFileSystem方法）需要更新根目录
         if (key.equals(HConstants.HBASE_DIR)) {
           if (value != null && !value.equals(conf.get(HConstants.HBASE_DIR))) {
             updateRootDir = true;
@@ -1668,13 +1758,18 @@ public class HRegionServer extends Thread
         if (LOG.isDebugEnabled()) {
           LOG.debug("Config from master: " + key + "=" + value);
         }
+        // KLRD: 使用Master返回的配置信息更新RS相应的配置，使RS与Master配置保持一致
         this.conf.set(key, value);
       }
       // Set our ephemeral znode up in zookeeper now we have a name.
+      // KLRD: 当前RS已经有了ServerName，在ZK的/hbase/rs这个znode创建一个临时子节点代表本RS
+      //  临时子节点名称：ServerName.toString => hostName,port,startCode
       createMyEphemeralNode();
 
       if (updateRootDir) {
         // initialize file system by the config fs.defaultFS and hbase.rootdir from master
+        // KLRD: RS与Master关于HDFS的根目录信息不一致，需要重新初始化文件系统客户端：walFs， dataFs
+        //  该方法在HRegionServer的构造方法已经执行过
         initializeFileSystem();
       }
 
@@ -1685,9 +1780,13 @@ public class HRegionServer extends Thread
       }
 
       // Save it in a file, this will allow to see if we crash
+      // KLRD: 把本RS在/hbase/rs下创建的临时子节点写入本机磁盘
+      //  写入的信息：/hbase/rs/hostName,port,startCode
+      //  磁盘位置：通过环境变量HBASE_ZNODE_FILE设置
       ZNodeClearer.writeMyEphemeralNodeOnDisk(getMyEphemeralNodePath());
 
       // This call sets up an initialized replication and WAL. Later we start it up.
+      // KLRD: 在HDFS构建本RS记录WAL的目录，同时初始化通过WAL进行集群间数据同步的能力
       setupWALAndReplication();
       // Init in here rather than in constructor after thread name has been set
       final MetricsTable metricsTable =
@@ -1701,10 +1800,12 @@ public class HRegionServer extends Thread
 
       // There is a rare case where we do NOT want services to start. Check config.
       if (getConfiguration().getBoolean("hbase.regionserver.workers", true)) {
+        // KLRD: 启动RS所有服务、线程
         startServices();
       }
       // In here we start up the replication Service. Above we initialized it. TODO. Reconcile.
       // or make sense of it.
+      // KLRD: 启动通过WAL进行集群间数据同步能力的服务
       startReplicationService();
 
       // Set up ZK
@@ -2015,11 +2116,29 @@ public class HRegionServer extends Thread
    * be hooked up to WAL.
    */
   private void setupWALAndReplication() throws IOException {
+    /**
+     * KLRD: /hbase/WALs目录结构
+     *  /hbase/WALs/
+     *     ├── regionserver1/ <--- logName，即serverName
+     *     │   ├── hbase-regionserver1-1632358531904.wal
+     *     │   ├── hbase-regionserver1-1632358532000.wal
+     *     ├── regionserver2/
+     *     │   ├── hbase-regionserver2-1632358532100.wal
+     *     │   └── hbase-regionserver2-1632358532200.wal
+     *     ├── oldWALs/               <--- 旧 WAL 文件存储目录：oldLogDir
+     *     │   ├── hbase-regionserver1-1632358531500.wal
+     *     │   ├── hbase-regionserver2-1632358531600.wal
+     *     └── ...
+     */
+    // KLRD: 用来管理 WAL 文件创建和维护
     WALFactory factory = new WALFactory(conf, serverName.toString(), (Server) this);
     // TODO Replication make assumptions here based on the default filesystem impl
+    // KLRD: 旧WAL日志目录/hbase/WALs/oldWALs
     Path oldLogDir = new Path(walRootDir, HConstants.HREGION_OLDLOGDIR_NAME);
+    // KLRD: 在/hbase/WALs下构建属于本RS的WAL日志目录名
     String logName = AbstractFSWALProvider.getWALDirectoryName(this.serverName.toString());
 
+    // KLRD: 本RS的WAL日志目录
     Path logDir = new Path(walRootDir, logName);
     LOG.debug("logDir={}", logDir);
     if (this.walFs.exists(logDir)) {
@@ -2028,10 +2147,12 @@ public class HRegionServer extends Thread
     }
     // Always create wal directory as now we need this when master restarts to find out the live
     // region servers.
+    // KLRD: 创建WAL日志目录
     if (!this.walFs.mkdirs(logDir)) {
       throw new IOException("Can not create wal directory " + logDir);
     }
     // Instantiate replication if replication enabled. Pass it the log directories.
+    // KLRD: 本方法用于初始化和配置HBase在集群间通过WAL进行数据复制机制（Replication）
     createNewReplicationInstance(conf, this, this.walFs, logDir, oldLogDir, factory);
     this.walFactory = factory;
   }
@@ -2075,6 +2196,7 @@ public class HRegionServer extends Thread
     if (!isStopped() && !isAborted()) {
       initializeThreads();
     }
+    // KLRD: 为批量数据加载提供安全控制：权限验证等
     this.secureBulkLoadManager = new SecureBulkLoadManager(this.conf, clusterConnection);
     this.secureBulkLoadManager.start();
 
@@ -2082,9 +2204,11 @@ public class HRegionServer extends Thread
     if (isHealthCheckerConfigured()) {
       int sleepTime = this.conf.getInt(HConstants.HEALTH_CHORE_WAKE_FREQ,
         HConstants.DEFAULT_THREAD_WAKE_FREQUENCY);
+      // KLRD: 周期任务：健康检查
       healthCheckChore = new HealthCheckChore(sleepTime, this, getConfiguration());
     }
 
+    // KLRD: WAL日志文件滚动服务
     this.walRoller = new LogRoller(this);
     this.flushThroughputController = FlushThroughputControllerFactory.create(this, conf);
     this.procedureResultReporter = new RemoteProcedureResultReporter(this);
@@ -2221,8 +2345,12 @@ public class HRegionServer extends Thread
     }
 
     // Memstore services.
+    // KLRD: 开启MemStore服务
     startHeapMemoryManager();
     // Call it after starting HeapMemoryManager.
+    // KLRD: HBase 2.0 中对 MemStore 的一个优化，引入了局部内存池和内存块重用机制，
+    //  显著提高了 HBase 在高并发写入场景下的写入性能。通过减少内存分配和回收的开销、
+    //  减少内存碎片化、降低垃圾回收压力，MemStoreLAB 提升了系统的吞吐量和稳定性
     initializeMemStoreChunkCreator();
   }
 
@@ -2307,10 +2435,12 @@ public class HRegionServer extends Thread
    * Puts up the webui.
    */
   private void putUpWebUI() throws IOException {
+    // KLRD: RegionServer webui端口号是：16030
     int port =
       this.conf.getInt(HConstants.REGIONSERVER_INFO_PORT, HConstants.DEFAULT_REGIONSERVER_INFOPORT);
     String addr = this.conf.get("hbase.regionserver.info.bindAddress", "0.0.0.0");
 
+    // KLRD: 如果是HMaster，webui端口号：16010
     if (this instanceof HMaster) {
       port = conf.getInt(HConstants.MASTER_INFO_PORT, HConstants.DEFAULT_MASTER_INFOPORT);
       addr = this.conf.get("hbase.master.info.bindAddress", "0.0.0.0");
@@ -2849,8 +2979,9 @@ public class HRegionServer extends Thread
     boolean interrupted = false;
     try {
       while (keepLooping()) {
+        // KLRD: 循环，直到成功从ZK获取Master地址（sn => ServerName）
         sn = this.masterAddressTracker.getMasterAddress(refresh);
-        if (sn == null) {
+        if (sn == null) { // KLRD: 未获取到Master信息，等待循环
           if (!keepLooping()) {
             // give up with no connection.
             LOG.debug("No master found and cluster is stopped; bailing out");
@@ -2868,12 +2999,14 @@ public class HRegionServer extends Thread
         }
 
         // If we are on the active master, use the shortcut
+        // KLRD: 如果当前是Master，直接获取报告状态的服务
         if (this instanceof HMaster && sn.equals(getServerName())) {
           intRssStub = ((HMaster) this).getMasterRpcServices();
           intLockStub = ((HMaster) this).getMasterRpcServices();
           break;
         }
         try {
+          // KLRD: 如果当前是RS，创建RS向Master报告状态服务的代理
           BlockingRpcChannel channel = this.rpcClient.createBlockingRpcChannel(sn,
             userProvider.getCurrent(), shortOperationTimeout);
           intRssStub = RegionServerStatusService.newBlockingStub(channel);
@@ -2901,6 +3034,7 @@ public class HRegionServer extends Thread
     }
     this.rssStub = intRssStub;
     this.lockStub = intLockStub;
+    // KLRD: 返回Master ServerName（地址信息）
     return sn;
   }
 
@@ -2921,11 +3055,13 @@ public class HRegionServer extends Thread
     if (this.masterless) {
       return RegionServerStartupResponse.getDefaultInstance();
     }
+    // KLRD: 从ZK获取Master信息sn，并创建RS向Master报告状态服务的代理：this.rssStub 和 this.lockStub
     ServerName masterServerName = createRegionServerStatusStub(true);
     RegionServerStatusService.BlockingInterface rss = rssStub;
     if (masterServerName == null || rss == null) {
       return null;
     }
+    // KLRD: 通过上一步创建的RS状态代理服务：rssStub向Master发送RS以启动的信息，并从Master获取指定的任务result
     RegionServerStartupResponse result = null;
     try {
       rpcServices.requestCount.reset();
@@ -2945,6 +3081,7 @@ public class HRegionServer extends Thread
       request.setPort(port);
       request.setServerStartCode(this.startcode);
       request.setServerCurrentTime(now);
+      // KLRD: RS向Master报告启动信息
       result = rss.regionServerStartup(null, request.build());
     } catch (ServiceException se) {
       IOException ioe = ProtobufUtil.getRemoteException(se);
@@ -3206,22 +3343,26 @@ public class HRegionServer extends Thread
    */
   private static void createNewReplicationInstance(Configuration conf, HRegionServer server,
     FileSystem walFs, Path walDir, Path oldWALDir, WALFactory walFactory) throws IOException {
+    // KLRD: 本方法用于初始化和配置HBase在集群间通过WAL进行数据复制机制（Replication）
     if (
       (server instanceof HMaster)
         && (!LoadBalancer.isTablesOnMaster(conf) || LoadBalancer.isSystemTablesOnlyOnMaster(conf))
-    ) {
+    ) {// KLRD: 如果Master上没未携带表，那么Master不需要提供集群间数据复制的能力
       return;
     }
     // read in the name of the source replication class from the config file.
+    // KLRD: source：数据复制源（用于读取数据的类）
     String sourceClassname = conf.get(HConstants.REPLICATION_SOURCE_SERVICE_CLASSNAME,
       HConstants.REPLICATION_SERVICE_CLASSNAME_DEFAULT);
 
     // read in the name of the sink replication class from the config file.
+    // KLRD: sink：数据复制接收端（用于接受数据的类）
     String sinkClassname = conf.get(HConstants.REPLICATION_SINK_SERVICE_CLASSNAME,
       HConstants.REPLICATION_SERVICE_CLASSNAME_DEFAULT);
 
     // If both the sink and the source class names are the same, then instantiate
     // only one object.
+    // KLRD: source和sink相同，即同一个服务类同时负责源和接收端的复制功能，这是只需初始化一个对象即可
     if (sourceClassname.equals(sinkClassname)) {
       server.replicationSourceHandler = newReplicationInstance(sourceClassname,
         ReplicationSourceService.class, conf, server, walFs, walDir, oldWALDir, walFactory);
@@ -3289,6 +3430,7 @@ public class HRegionServer extends Thread
     Class<? extends HRegionServer> regionServerClass = (Class<? extends HRegionServer>) conf
       .getClass(HConstants.REGION_SERVER_IMPL, HRegionServer.class);
 
+    // KLRD: 最终执行HRegionServerCommandLine#run
     new HRegionServerCommandLine(regionServerClass).doMain(args);
   }
 

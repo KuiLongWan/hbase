@@ -309,13 +309,17 @@ public class HRegion implements HeapSize, PropagatingConfigurationObserver, Regi
   // - the thread that owns the lock (allow reentrancy)
   // - reference count of (reentrant) locks held by the thread
   // - the row itself
+  // 管理被锁定的行的映射表,
   private final ConcurrentHashMap<HashedBytes, RowLockContext> lockedRows =
     new ConcurrentHashMap<>();
 
+  // 用于存储列族（column family）和其对应的存储对象（HStore）的映射关系
+  // key：为列族名，value：该列族相关数据
   protected final Map<byte[], HStore> stores =
     new ConcurrentSkipListMap<>(Bytes.BYTES_RAWCOMPARATOR);
 
   // TODO: account for each registered handler in HeapSize computation
+  // 用于存储协处理器服务的映射表
   private Map<String, com.google.protobuf.Service> coprocessorServiceHandlers = Maps.newHashMap();
 
   // Track data size in all memstores

@@ -93,11 +93,17 @@ public class RpcRetryingCallerImpl<T> implements RpcRetryingCaller<T> {
     throws IOException, RuntimeException {
     List<RetriesExhaustedException.ThrowableWithExtraContext> exceptions = new ArrayList<>();
     tracker.start();
-    context.clear();
+    context.clear(); // OpOpRetryingInterceptorContext
     for (int tries = 0;; tries++) {
       long expectedSleep;
       try {
         // bad cache entries are cleared in the call to RetryingCallable#throwable() in catch block
+        // KLRD: callable -> RegionServerCallable
+        //  1.根据表名和rowkey获取Region位置
+        //    a.首先使用rowkey在MetaCache中查询Region信息
+        //    b.如果找到，则设置好Region信息
+        //    c.如果没找到，先从ZK获取meta表的Region信息，然后使用rowkey去meta中查找rowkey的Region信息
+        //  2.设置RPC Stub
         callable.prepare(tries != 0);
         interceptor.intercept(context.prepare(callable, tries));
         return callable.call(getTimeout(callTimeout));

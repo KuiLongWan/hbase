@@ -260,6 +260,9 @@ public class MasterAddressTracker extends ZKNodeTracker {
    */
   public static boolean setMasterAddress(final ZKWatcher zkw, final String znode,
     final ServerName master, int infoPort) throws KeeperException {
+    // KLRD
+    //  1.在/hbase/backup-masters/下创建一个临时znode节点，并将自己的位置和服务端口写入该节点
+    //  2.注册监听
     return ZKUtil.createEphemeralNodeAndWatch(zkw, znode, toByteArray(master, infoPort));
   }
 
@@ -344,14 +347,16 @@ public class MasterAddressTracker extends ZKNodeTracker {
   public static List<ServerName> getBackupMastersAndRenewWatch(ZKWatcher zkw)
     throws InterruptedIOException {
     // Build Set of backup masters from ZK nodes
+    // KLRD: 获取所有backup master
     List<String> backupMasterStrings = null;
     try {
+      // KLRD: backupMasterAddressesZNode = /hbase/backup-masters
       backupMasterStrings = ZKUtil.listChildrenAndWatchForNewChildren(zkw,
         zkw.getZNodePaths().backupMasterAddressesZNode);
     } catch (KeeperException e) {
       LOG.warn(zkw.prefix("Unable to list backup servers"), e);
     }
-
+    // KLRD: 通过backup master构建ServerName
     List<ServerName> backupMasters = Collections.emptyList();
     if (backupMasterStrings != null && !backupMasterStrings.isEmpty()) {
       backupMasters = new ArrayList<>(backupMasterStrings.size());

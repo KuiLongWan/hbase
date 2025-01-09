@@ -87,6 +87,7 @@ public class ActiveMasterManager extends ZKListener {
     watcher.registerListener(this);
     this.sn = sn;
     this.master = master;
+    // KLRD: 从ZK获取所有backup master信息
     updateBackupMasters();
   }
 
@@ -133,6 +134,20 @@ public class ActiveMasterManager extends ZKListener {
   }
 
   private void updateBackupMasters() throws InterruptedIOException {
+    /**
+     * KLRD:
+     *  1.HBase集群关于master的active和backup的分配
+     *  2.ZK上有两个znode：
+     *    /hbase/master         状态为active的HMaster
+     *    /hbase/backup-master  状态为backup的HMaster
+     *  3.在$HBase_HOME/conf/backup-masters中指定的就是backup master
+     *  4.一般不需要指定哪个机器是active master，
+     *    在哪个机器上执行start-hbase.sh，那么这个节点就是active master
+     *  5.即使是active master，启动时也会到/hbase/backup-master下创建一个子znode代表自己
+     *    然后再创建名为/hbase/master的znode，将自己信息写入该znode中
+     *    如果成功自己信息写入/hbase/master，那么表示自己成为active master，
+     *    然后再从/hbase/backup-masters将自己的znode删除
+     */
     backupMasters =
       ImmutableList.copyOf(MasterAddressTracker.getBackupMastersAndRenewWatch(watcher));
   }
@@ -227,13 +242,16 @@ public class ActiveMasterManager extends ZKListener {
   boolean blockUntilBecomingActiveMaster(int checkInterval, TaskGroup startupTaskGroup) {
     MonitoredTask blockUntilActive =
       startupTaskGroup.addTask("Blocking until becoming active master");
+    // KLRD: 自己的backup znode，如果自己成功竞选为Active，需要将这个Backup znode删除
     String backupZNode = ZNodePaths
       .joinZNode(this.watcher.getZNodePaths().backupMasterAddressesZNode, this.sn.toString());
+    // KLRD: 一直尝试注册成为Active Master
     while (!(master.isAborted() || master.isStopped())) {
       blockUntilActive.setStatus("Trying to register in ZK as active master");
       // Try to become the active master, watch if there is another master.
       // Write out our ServerName as versioned bytes.
       try {
+        // KLRD 如果当前机器成功创建/hbase/master znode，则表示该机器成为active master
         if (
           MasterAddressTracker.setMasterAddress(this.watcher,
             this.watcher.getZNodePaths().masterAddressZNode, this.sn, infoPort)
@@ -241,20 +259,25 @@ public class ActiveMasterManager extends ZKListener {
 
           // If we were a backup master before, delete our ZNode from the backup
           // master directory since we are the active now)
+          // KLRD: 竞选active成功，删除代表自己的backup znode
           if (ZKUtil.checkExists(this.watcher, backupZNode) != -1) {
             LOG.info("Deleting ZNode for " + backupZNode + " from backup master directory");
             ZKUtil.deleteNodeFailSilent(this.watcher, backupZNode);
           }
           // Save the znode in a file, this will allow to check if we crash in the launch scripts
+          // KLRD: 将信息持久化到磁盘，通过环境变量：HBASE_ZNODE_FILE设置
           ZNodeClearer.writeMyEphemeralNodeOnDisk(this.sn.toString());
 
           // We are the master, return
           blockUntilActive.setStatus("Successfully registered as active master.");
-          this.clusterHasActiveMaster.set(true);
+          this.clusterHasActiveMaster.set(true); // KLRD 当前集群已有active master
           activeMasterServerName = sn;
           LOG.info("Registered as active master=" + this.sn);
           return true;
         }
+
+        // KLRD: 上面逻辑是分布式竞争选举active master
+        //       下面逻辑是自己没有成为active，则获取当前active master，并注册监听，等待重新竞选
 
         // Invalidate the active master name so that subsequent requests do not get any stale
         // master information. Will be re-fetched if needed.
@@ -278,6 +301,8 @@ public class ActiveMasterManager extends ZKListener {
             // Hopefully next time around we won't fail the parse. Dangerous.
             continue;
           }
+          // KLRD: 若从ZK获取的当前Active Master是自己（自己是backup），这是一种异常情况
+          //  从ZK删除当前active znode（/hbase/master）相关信息，让集群重新竞选active Master
           if (ServerName.isSameAddress(currentMaster, this.sn)) {
             msg = ("Current master has this master's address, " + currentMaster
               + "; master was restarted? Deleting node.");

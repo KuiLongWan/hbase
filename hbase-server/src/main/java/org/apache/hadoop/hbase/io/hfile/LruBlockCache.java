@@ -84,6 +84,29 @@ import org.apache.hbase.thirdparty.com.google.common.util.concurrent.ThreadFacto
  * fewest least-recently-used blocks necessary from each of the three priorities (would be 3 times
  * bytes to free). It then uses the priority chunk sizes to evict fairly according to the relative
  * sizes and usage.
+ * <p>
+ * 这是一个基于内存的块缓存实现，使用HeapSize进行内存管理，使用LRU（最近最少使用）淘汰算法来控制内存使用，并且支持并发操作。
+ * 它依赖于ConcurrentHashMap，并通过非阻塞的淘汰线程，保证缓存块的存储（cacheBlock）和获取（getBlock）操作在常数时间内完成。
+ * <p>
+ * 该缓存包含三种块优先级，以实现扫描抗性和内存内列族（即通过org.apache.hadoop.hbase.HColumnDescriptor.setInMemory(boolean)
+ * 设置的列族，如果可能，应该从内存中服务）的功能。三种优先级分别是：单次访问、多次访问、和内存优先级。
+ * 如果org.apache.hadoop.hbase.HColumnDescriptor.isInMemory()返回为true，那么块会被加入到内存优先级中。
+ * 否则，当块第一次被读取到缓存中时，会被赋予单次访问优先级。如果一个块在缓存中再次被访问，它就会被标记为多次访问优先级。
+ * 通过这种优先级划分，可以防止扫描操作频繁替换缓存中的数据，这种设计加入了一个“最少使用”的因素到淘汰算法中。
+ * <p>
+ * 每种优先级都分配了缓存总大小中的一部分内存，以确保在淘汰时的公平性。每种优先级都会保持接近其最大允许大小，
+ * 但如果某个优先级没有使用完它的全部内存空间，其他优先级可以超出各自的限制进行扩展。
+ * <p>
+ * 该缓存至少在创建时需要设置总大小和平均块大小。所有大小都以字节为单位。块大小并不是特别重要，因为该缓存能够动态调整块的大小。
+ * 平均块大小主要用于预分配数据结构和初始估算内存使用。
+ * <p>
+ * 详细的构造函数允许为三种优先级分别设置大小（它们的总和应等于定义的最大缓存大小）。构造函数还设置了触发和控制淘汰线程的级别。
+ * <p>
+ * “可接受的大小”是触发淘汰进程的缓存大小阈值。当缓存大小达到该阈值时，淘汰进程会开始，移除足够的块使缓存大小低于指定的最小值。
+ * <p>
+ * 淘汰操作发生在一个单独的线程中，它会对整个缓存进行一次完整扫描，确定需要释放多少字节才能达到最小缓存大小。扫描过程中，
+ * 它会从每个优先级中选择最少的最近最少使用的块进行移除（总共需要释放三种优先级的3倍大小的块）。
+ * 然后根据优先级的内存分配大小和实际使用情况，公平地执行淘汰操作。
  */
 @InterfaceAudience.Private
 public class LruBlockCache implements FirstLevelBlockCache {

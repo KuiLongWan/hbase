@@ -89,6 +89,7 @@ public class NettyRpcServer extends RpcServer {
   public NettyRpcServer(Server server, String name, List<BlockingServiceAndInterface> services,
     InetSocketAddress bindAddress, Configuration conf, RpcScheduler scheduler,
     boolean reservoirEnabled) throws IOException {
+    // KLRD: 初始化Rpc服务端参数
     super(server, name, services, bindAddress, conf, scheduler, reservoirEnabled);
     this.bindAddress = bindAddress;
     this.channelAllocator = getChannelAllocator(conf);
@@ -102,6 +103,7 @@ public class NettyRpcServer extends RpcServer {
     }
     EventLoopGroup eventLoopGroup = config.group();
     Class<? extends ServerChannel> channelClass = config.serverChannelClass();
+    // KLRD: 启动netty服务
     ServerBootstrap bootstrap = new ServerBootstrap().group(eventLoopGroup).channel(channelClass)
       .childOption(ChannelOption.TCP_NODELAY, tcpNoDelay)
       .childOption(ChannelOption.SO_KEEPALIVE, tcpKeepAlive)
@@ -116,11 +118,14 @@ public class NettyRpcServer extends RpcServer {
           pipeline.addLast("preambleDecoder", preambleDecoder);
           pipeline.addLast("preambleHandler", createNettyRpcServerPreambleHandler());
           pipeline.addLast("frameDecoder", new NettyRpcFrameDecoder(maxRequestSize));
+          // KLRD: 解码器: 客户端和服务端通信数据的解码
           pipeline.addLast("decoder", new NettyRpcServerRequestDecoder(allChannels, metrics));
+          // KLRD: 编码器: 客户端和服务端通信数据的编码
           pipeline.addLast("encoder", new NettyRpcServerResponseEncoder(metrics));
         }
       });
     try {
+      // KLRD: Netty服务端绑定端口，调用sync方法启动Netty
       serverChannel = bootstrap.bind(this.bindAddress).sync().channel();
       LOG.info("Bind to {}", serverChannel.localAddress());
     } catch (InterruptedException e) {

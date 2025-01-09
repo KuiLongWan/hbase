@@ -63,8 +63,11 @@ public class CachedClusterId {
   private AtomicInteger cacheMisses = new AtomicInteger(0);
 
   public CachedClusterId(Server server, Configuration conf) throws IOException {
+    // KLRD: rootDir=/hbase
     this.rootDir = CommonFSUtils.getRootDir(conf);
+    // KLRD: 获取fs客户端
     this.fs = rootDir.getFileSystem(conf);
+    // KLRD: RPCServer
     this.server = server;
   }
 
